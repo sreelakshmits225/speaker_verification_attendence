@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+node_modules/
+speaker_project.zip
+ngrok.exe
+voice_attendance.db
+uploads/
+temp_dataset/
+
+dataset/
+pretrained_models/
