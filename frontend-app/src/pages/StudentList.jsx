@@ -1,29 +1,37 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { ArrowLeft, User, Download, Trash2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { ArrowLeft, User, Download, Trash2, Edit2 } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
 
 function StudentList() {
     const [students, setStudents] = useState([]);
     const [loading, setLoading] = useState(true);
+    const role = localStorage.getItem('role');
+    const navigate = useNavigate();
 
     useEffect(() => {
+        if (role !== 'TEACHER') {
+            navigate('/');
+            return;
+        }
         loadData();
     }, []);
 
     const loadData = async () => {
         try {
-            const [studentsRes, logsRes] = await Promise.all([
+            const [studentsRes, attendanceRes] = await Promise.all([
                 api.get('/api/v1/students/'),
                 api.get('/api/v1/admin/attendance')
             ]);
 
-            const logs = logsRes.data;
-            const presentIds = new Set(logs.filter(l => l.status === 'PRESENT').map(l => l.student_id));
+            const attendanceMap = {};
+            attendanceRes.data.forEach(a => {
+                attendanceMap[a.student_id] = a;
+            });
 
             const sList = studentsRes.data.map(s => ({
                 ...s,
-                status: presentIds.has(s.id) ? 'Present' : 'Absent'
+                attendance: attendanceMap[s.id] || null
             }));
 
             setStudents(sList);
@@ -35,12 +43,12 @@ function StudentList() {
     };
 
     const handleReset = async () => {
-        if (!window.confirm("Are you sure you want to reset attendance for TODAY? All 'Present' marks will be removed.")) return;
+        if (!window.confirm("Are you sure you want to reset ALL attendance?")) return;
         try {
             await api.delete('/api/v1/admin/attendance/reset');
             loadData();
         } catch (e) {
-            alert("Failed to reset: " + e.message);
+            alert("Failed to reset");
         }
     };
 
@@ -50,12 +58,11 @@ function StudentList() {
             const url = window.URL.createObjectURL(new Blob([response.data]));
             const link = document.createElement('a');
             link.href = url;
-            link.setAttribute('download', `attendance_${new Date().toISOString().split('T')[0]}.csv`);
+            link.setAttribute('download', 'attendance_report.csv');
             document.body.appendChild(link);
             link.click();
-            link.remove();
         } catch (e) {
-            alert("Export failed: " + e.message);
+            alert("Export failed. Make sure the sheet is approved.");
         }
     };
 
@@ -66,57 +73,32 @@ function StudentList() {
                     <Link to="/" style={{ color: 'white', marginRight: '15px' }}>
                         <ArrowLeft size={24} />
                     </Link>
-                    <h1 style={{ margin: 0, fontSize: '1.5rem', textAlign: 'left' }}>Student List</h1>
+                    <h1 style={{ margin: 0, fontSize: '1.5rem' }}>All Students</h1>
                 </div>
-                <div style={{ display: 'flex', gap: '10px' }}>
-                    <button
-                        onClick={handleReset}
-                        className="btn-danger"
-                        style={{ padding: '8px', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem' }}
-                        title="Reset Attendance"
-                    >
-                        <Trash2 size={16} /> Reset
-                    </button>
-                    <button
-                        onClick={handleExport}
-                        className="btn-primary"
-                        style={{ padding: '8px', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem' }}
-                        title="Export CSV"
-                    >
-                        <Download size={16} /> CSV
-                    </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={handleReset} className="btn-secondary" style={{ padding: '8px', fontSize: '0.7rem' }}><Trash2 size={14} /></button>
+                    <button onClick={handleExport} className="btn-primary" style={{ padding: '8px 15px', fontSize: '0.8rem', width: 'auto' }}>CSV</button>
                 </div>
             </div>
 
-            {loading ? <p>Loading...</p> : (
+            {loading ? <p>Loading Students...</p> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                    {students.length === 0 ? <p>No students found.</p> : students.map(s => (
-                        <div key={s.id} className="glass-card" style={{
-                            marginBottom: 0, padding: '15px',
-                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            borderLeft: `4px solid ${s.status === 'Present' ? '#4caf50' : '#ef4444'}`
-                        }}>
-                            <div style={{ display: 'flex', alignItems: 'center' }}>
-                                <div style={{
-                                    width: '40px', height: '40px', borderRadius: '50%',
-                                    background: 'rgba(255,255,255,0.1)', display: 'flex',
-                                    alignItems: 'center', justifyContent: 'center', marginRight: '15px'
-                                }}>
-                                    <User size={20} color="#ddd" />
-                                </div>
-                                <div style={{ textAlign: 'left' }}>
-                                    <h3 style={{ margin: '0 0 5px', fontSize: '1rem' }}>{s.name}</h3>
-                                    <p style={{ margin: 0, color: '#aaa', fontSize: '0.8rem' }}>
-                                        #{s.roll_number} • {s.course}
-                                    </p>
-                                </div>
+                    {students.map(s => (
+                        <div key={s.id} className="glass-card" style={{ marginBottom: 0, padding: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ textAlign: 'left' }}>
+                                <div style={{ fontWeight: 'bold' }}>{s.name}</div>
+                                <div style={{ fontSize: '0.75rem', color: '#888' }}>Roll: {s.roll_number} | {s.course}</div>
                             </div>
-                            <span style={{
-                                color: s.status === 'Present' ? '#4caf50' : '#ef4444',
-                                fontWeight: 'bold', fontSize: '0.8rem'
-                            }}>
-                                {s.status}
-                            </span>
+                            <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '15px' }}>
+                                <div style={{
+                                    fontSize: '0.8rem',
+                                    fontWeight: 'bold',
+                                    color: s.attendance ? (s.attendance.status === 'LATECOMER' ? '#ff9800' : '#4caf50') : '#f44336'
+                                }}>
+                                    {s.attendance?.status || 'ABSENT'}
+                                </div>
+                                <Link to="/logs" style={{ color: '#646cff' }}><Edit2 size={16} /></Link>
+                            </div>
                         </div>
                     ))}
                 </div>

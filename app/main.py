@@ -18,6 +18,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "version": "1.1"}
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # Serve React App

@@ -1,8 +1,14 @@
 import axios from 'axios';
 
-// Get stored URL or default to localhost
+// Get stored URL or default to the current host at port 8000
 const getBaseUrl = () => {
-    return localStorage.getItem('api_url') || 'http://localhost:8000';
+    const stored = localStorage.getItem('api_url');
+    if (stored) return stored;
+
+    // Auto-detect host (useful for mobile testing on LAN)
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://127.0.0.1:8001';
+    return `http://${host}:8001`;
 };
 
 export const api = axios.create({
@@ -10,9 +16,13 @@ export const api = axios.create({
     timeout: 120000, // Increased to 120s for processing overhead
 });
 
-// Interceptor to update URL dynamically if changed
+// Interceptor to update URL and add Token
 api.interceptors.request.use((config) => {
     config.baseURL = getBaseUrl();
+    const token = localStorage.getItem('token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
 });
 

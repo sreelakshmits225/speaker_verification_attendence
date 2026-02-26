@@ -14,7 +14,7 @@ timeout /t 3 /nobreak >nul
 
 :: Start Frontend (React)
 cd frontend-app
-start "Frontend PWA" cmd /k "npm run dev -- --host"
+start "Frontend PWA" cmd /k "call npm.cmd run dev -- --host"
 
 echo System Started!
 echo ---------------------------------------------------

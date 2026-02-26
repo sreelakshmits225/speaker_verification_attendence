@@ -28,7 +28,8 @@ body {
   margin: 0 auto;
   padding: 2rem;
   width: 100%;
-  max-width: 500px; /* Mobile width constraint */
+  max-width: 500px;
+  /* Mobile width constraint */
   text-align: center;
 }
 
@@ -93,10 +94,33 @@ body {
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fade-in {
   animation: fadeIn 0.4s ease-out forwards;
+}
+
+.login-input {
+  width: 100%;
+  padding: 12px;
+  background: #23272f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+
+.login-input:focus {
+  border-color: #646cff;
+  outline: none;
 }

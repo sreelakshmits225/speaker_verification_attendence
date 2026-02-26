@@ -4,20 +4,19 @@ from typing import Optional
 import shutil
 import os
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
+import math
 
 from app.db.database import get_db
 from app import models, schemas
 from app.core.config import settings
 from app.ml_engine.processing import audio_processor
 from app.ml_engine.embedding import speaker_model
-import random
-import math
+from app.api.deps import get_current_active_user, student_required
 
 router = APIRouter()
 
 def haversine(lat1, lon1, lat2, lon2):
-    """Calculate the great circle distance between two points in meters."""
     R = 6371000  # radius of Earth in meters
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -25,27 +24,59 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dphi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-# Threshold for Cosine Similarity (To be tuned)
-# Restored to 0.60 for security. Users should enroll on the device they intend to use.
 VERIFICATION_THRESHOLD = 0.50 
+
+def get_attendance_status(session_start: datetime, now: datetime) -> str:
+    if not session_start:
+        return "PRESENT" # Fallback if no start time set
+    
+    diff = (now - session_start).total_seconds() / 60.0
+    
+    if diff > 45.0:
+        return "ABSENT"
+    elif diff > 10.0:
+        return "LATECOMER"
+    else:
+        return "PRESENT"
 
 @router.post("/", response_model=schemas.VerificationResponse)
 async def verify_student(
-    student_id: int = Form(...),
     class_id: int = Form(...),
     file: UploadFile = File(...),
     latitude: Optional[float] = Form(None),
     longitude: Optional[float] = Form(None),
-    passphrase: str = Form(None),
+    current_user: models.User = Depends(student_required),
     db: Session = Depends(get_db)
 ):
+    student = db.query(models.Student).filter(models.Student.user_id == current_user.id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+
     # 1. Fetch Student Template
-    template = db.query(models.VoiceTemplate).filter(models.VoiceTemplate.student_id == student_id).first()
+    template = db.query(models.VoiceTemplate).filter(models.VoiceTemplate.student_id == student.id).first()
     if not template:
         raise HTTPException(status_code=404, detail="Student not enrolled")
 
+    # Fetch Class info for geofence and timing
+    class_session = db.query(models.ClassSession).filter(models.ClassSession.id == class_id).first()
+    if not class_session:
+        raise HTTPException(status_code=404, detail="Class session not found")
+
+    # Requirement: Speaking only available if location is detected
+    if latitude is None or longitude is None:
+        raise HTTPException(status_code=400, detail="Location detection mandatory for attendance")
+
+    # Strict Geofencing Check
+    if class_session.latitude and class_session.longitude:
+        distance = haversine(latitude, longitude, class_session.latitude, class_session.longitude)
+        if distance > (class_session.radius or 20.0):
+            raise HTTPException(
+                status_code=403, 
+                detail=f"Verification Failed: Outside allowed area ({distance:.1f}m away)"
+            )
+
     # 2. Save and Process Audio
-    file_location = os.path.join(settings.UPLOAD_DIR, f"verify_{student_id}_{datetime.utcnow().timestamp()}.wav")
+    file_location = os.path.join(settings.UPLOAD_DIR, f"verify_{student.id}_{datetime.utcnow().timestamp()}.wav")
     with open(file_location, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
@@ -53,7 +84,6 @@ async def verify_student(
         signal = audio_processor.load_audio(file_location)
         signal = audio_processor.normalize_volume(signal)
         
-        # Quality Check
         if audio_processor.is_silent(signal):
              raise HTTPException(status_code=400, detail="Audio too silent")
 
@@ -61,47 +91,42 @@ async def verify_student(
         emb = speaker_model.get_embedding(signal)
         
         # 4. Compare
-        enroll_emb = template.embedding
-        score = speaker_model.compute_similarity(emb, enroll_emb)
-        
-        # --- LIVENESS CHECK ---
+        score = speaker_model.compute_similarity(emb, template.embedding)
         liveness_score = audio_processor.check_liveness(signal)
         
-        # --- GEOFENCING CHECK ---
-        location_verified = True
-        location_message = ""
+        is_match = score > VERIFICATION_THRESHOLD and liveness_score >= 0.5
         
-        # Fetch Class info for geofence
-        class_session = db.query(models.ClassSession).filter(models.ClassSession.id == class_id).first()
-        if class_session and class_session.latitude and class_session.longitude:
-            if latitude is None or longitude is None:
-                location_verified = False
-                location_message = "Location required for this class"
-            else:
-                distance = haversine(latitude, longitude, class_session.latitude, class_session.longitude)
-                if distance > (class_session.radius or 20.0):
-                    location_verified = False
-                    location_message = f"Outside allowed area ({distance:.1f}m away)"
+        if not is_match:
+             message = "Verification Failed: Spoofing detected" if liveness_score < 0.5 else "Verification Failed: Voice mismatch"
+             return {
+                 "verified": False,
+                 "score": float(score),
+                 "liveness_score": float(liveness_score),
+                 "student_id": student.id,
+                 "message": message,
+                 "location_verified": True
+             }
+
+        # 5. Determine Status based on Timing
+        now = datetime.utcnow()
+        status = get_attendance_status(class_session.session_start, now)
         
-        is_match = score > VERIFICATION_THRESHOLD
-        
-        # Penalize match if liveness or location is failed
-        if liveness_score < 0.5:
-             is_match = False
-             message = "Verification Failed: Spoofing detected"
-        elif not location_verified:
-             is_match = False
-             message = f"Verification Failed: {location_message}"
-        else:
-             status = "PRESENT" if is_match else "REJECTED"
-             message = "Verification Successful" if is_match else "Verification Failed: Voice mismatch"
-        
-        # 5. Log Attendance
+        if status == "ABSENT":
+            return {
+                "verified": False,
+                "score": float(score),
+                "liveness_score": float(liveness_score),
+                "student_id": student.id,
+                "message": "Verification Failed: Session expired (over 45 mins)",
+                "location_verified": True
+            }
+
+        # 6. Log Attendance
         attendance = models.Attendance(
-            student_id=student_id,
+            student_id=student.id,
             class_id=class_id,
-            timestamp=datetime.utcnow(),
-            status="PRESENT" if is_match else "REJECTED",
+            timestamp=now,
+            status=status,
             verification_score=float(score),
             liveness_score=float(liveness_score),
             latitude=latitude,
@@ -111,12 +136,12 @@ async def verify_student(
         db.commit()
         
         return {
-            "verified": is_match,
+            "verified": True,
             "score": float(score),
             "liveness_score": float(liveness_score),
-            "student_id": student_id,
-            "message": message,
-            "location_verified": location_verified
+            "student_id": student.id,
+            "message": f"Verified successfully as {status}",
+            "location_verified": True
         }
         
     finally:
@@ -128,60 +153,68 @@ async def identify_speaker(
     file: UploadFile = File(...),
     latitude: Optional[float] = Form(None),
     longitude: Optional[float] = Form(None),
+    current_user: models.User = Depends(student_required),
     db: Session = Depends(get_db)
 ):
+    student = db.query(models.Student).filter(models.Student.user_id == current_user.id).first()
+    if not student or not student.mentor_id:
+        raise HTTPException(status_code=400, detail="Student must select a mentor first")
+
+    # Requirement: speaking option only available if location detected
+    if latitude is None or longitude is None:
+        raise HTTPException(status_code=400, detail="Location detection mandatory for identification")
+
+    # Find the latest "active" class session for the student's mentor
+    class_session = db.query(models.ClassSession).filter(
+        models.ClassSession.teacher_id == student.mentor_id
+    ).order_by(models.ClassSession.session_start.desc()).first()
+
+    if not class_session or not class_session.session_start:
+        raise HTTPException(status_code=400, detail="No active class session found for your mentor")
+
+    # Strict Geofencing Check
+    if class_session.latitude and class_session.longitude:
+        distance = haversine(latitude, longitude, class_session.latitude, class_session.longitude)
+        if distance > (class_session.radius or 20.0):
+             raise HTTPException(status_code=403, detail=f"Outside allowed area ({distance:.1f}m away)")
+
     # Save Upload
     file_location = os.path.join(settings.UPLOAD_DIR, f"identify_{datetime.utcnow().timestamp()}.wav")
     with open(file_location, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
     try:
-        # Process Audio
         signal = audio_processor.load_audio(file_location)
         signal = audio_processor.normalize_volume(signal)
         if audio_processor.is_silent(signal):
              return {"identified": False, "message": "Audio too silent"}
 
-        # --- LIVENESS CHECK ---
         liveness_score = audio_processor.check_liveness(signal)
-
-        # Extract Embedding
         emb = speaker_model.get_embedding(signal)
         
-        # Compare with ALL students
-        templates = db.query(models.VoiceTemplate).all()
-        best_score = -1.0
-        best_student = None
+        # Verify it matches the logged-in student
+        template = db.query(models.VoiceTemplate).filter(models.VoiceTemplate.student_id == student.id).first()
+        if not template:
+            return {"identified": False, "message": "Voice not enrolled"}
+            
+        score = speaker_model.compute_similarity(emb, template.embedding)
         
-        for t in templates:
-            score = speaker_model.compute_similarity(emb, t.embedding)
-            if score > best_score:
-                best_score = score
-                best_student = t.student
-                
-        # Decision
-        location_verified = True # Identification mode usually doesn't have a fixed class context
-        # But we could check against ALL classes or just the default one
-        class_session = db.query(models.ClassSession).filter(models.ClassSession.id == 101).first()
-        if class_session and class_session.latitude and class_session.longitude:
-             if latitude and longitude:
-                  distance = haversine(latitude, longitude, class_session.latitude, class_session.longitude)
-                  if distance > (class_session.radius or 20.0):
-                       location_verified = False
-             else:
-                  # Location is REQUIRED if a boundary is set
-                  location_verified = False
-
-        is_identified = (best_score > VERIFICATION_THRESHOLD) and (liveness_score >= 0.5) and location_verified
+        is_identified = (score > VERIFICATION_THRESHOLD) and (liveness_score >= 0.5)
         
         if is_identified:
+            now = datetime.utcnow()
+            status = get_attendance_status(class_session.session_start, now)
+            
+            if status == "ABSENT":
+                 return {"identified": False, "message": "Session expired (over 45 mins)"}
+
             # LOG ATTENDANCE
             attendance = models.Attendance(
-                student_id=best_student.id,
-                class_id=101, # Default class ID for now
-                timestamp=datetime.utcnow(),
-                status="PRESENT",
-                verification_score=float(best_score),
+                student_id=student.id,
+                class_id=class_session.id,
+                timestamp=now,
+                status=status,
+                verification_score=float(score),
                 liveness_score=float(liveness_score),
                 latitude=latitude,
                 longitude=longitude
@@ -191,24 +224,19 @@ async def identify_speaker(
             
             return {
                 "identified": True,
-                "student_id": best_student.id,
-                "name": best_student.name,
-                "score": float(best_score),
+                "student_id": student.id,
+                "name": student.name,
+                "score": float(score),
                 "liveness_score": float(liveness_score),
-                "location_verified": location_verified
+                "location_verified": True,
+                "message": f"Identified as {status}"
             }
         else:
-            if not location_verified:
-                 message = "Outside allowed area"
-            else:
-                 message = "Unknown Speaker" if best_score <= VERIFICATION_THRESHOLD else "Spoofing Detected"
-                 
             return {
                 "identified": False,
-                "message": message,
-                "score": float(best_score),
-                "liveness_score": float(liveness_score),
-                "location_verified": location_verified
+                "message": "Voice mismatch or Spoofing detected",
+                "score": float(score),
+                "liveness_score": float(liveness_score)
             }
             
     finally:
