@@ -5,7 +5,12 @@ const getBaseUrl = () => {
     const stored = localStorage.getItem('api_url');
     if (stored) return stored;
 
-    // Auto-detect host (useful for mobile testing on LAN)
+    // In production (unified hosting), the API is on the same host and port
+    if (import.meta.env.PROD) {
+        return window.location.origin;
+    }
+
+    // Auto-detect host for local dev/testing
     const host = window.location.hostname;
     if (host === 'localhost' || host === '127.0.0.1') return 'http://127.0.0.1:8000';
     return `http://${host}:8000`;
