@@ -12,6 +12,7 @@ function Verify() {
     const [location, setLocation] = useState(null);
     const [gpsStatus, setGpsStatus] = useState('idle');
     const [hasMentor, setHasMentor] = useState(true);
+    const [isSecure, setIsSecure] = useState(true);
     const navigate = useNavigate();
 
     const recorderRef = useRef(null);
@@ -21,6 +22,7 @@ function Verify() {
 
     useEffect(() => {
         checkProfile();
+        setIsSecure(window.isSecureContext);
         startGpsWatch();
         return () => {
             if (watchIdRef.current !== null) {
@@ -54,10 +56,15 @@ function Verify() {
                     gpsStatusRef.current = 'ready';
                 },
                 (err) => {
+                    console.error("GPS Error:", err);
                     setGpsStatus('error');
                     gpsStatusRef.current = 'error';
                 },
-                { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 10000,
+                    timeout: 20000 // Increased timeout for slower locks
+                }
             );
         } else {
             setGpsStatus('error');
@@ -137,7 +144,25 @@ function Verify() {
                             {gpsStatus === 'ready' ? "📍 GPS Locked & Secured" :
                                 gpsStatus === 'acquiring' ? "📡 Acquiring GPS..." :
                                     "⚠️ GPS Error: Check Permissions"}
+                            {gpsStatus !== 'ready' && (
+                                <button
+                                    onClick={() => {
+                                        if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
+                                        startGpsWatch();
+                                    }}
+                                    style={{ marginLeft: '10px', background: 'none', border: '1px solid #444', color: '#888', borderRadius: '4px', padding: '2px 8px', fontSize: '0.7rem', cursor: 'pointer' }}
+                                >
+                                    Refresh GPS
+                                </button>
+                            )}
                         </div>
+
+                        {!isSecure && (
+                            <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', color: '#ef4444', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.85rem' }}>
+                                <AlertCircle size={16} style={{ verticalAlign: 'middle', marginRight: '5px' }} />
+                                <strong>Non-Secure Connection:</strong> Microphone access will be blocked. Use the <strong>HTTPS</strong> link.
+                            </div>
+                        )}
 
                         {!recording ? (
                             <div

@@ -7,8 +7,8 @@ const getBaseUrl = () => {
 
     // Auto-detect host (useful for mobile testing on LAN)
     const host = window.location.hostname;
-    if (host === 'localhost' || host === '127.0.0.1') return 'http://127.0.0.1:8001';
-    return `http://${host}:8001`;
+    if (host === 'localhost' || host === '127.0.0.1') return 'http://127.0.0.1:8000';
+    return `http://${host}:8000`;
 };
 
 export const api = axios.create({

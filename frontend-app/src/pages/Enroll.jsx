@@ -13,11 +13,13 @@ function Enroll() {
     const [files, setFiles] = useState([]);
     const [status, setStatus] = useState('');
     const [loading, setLoading] = useState(true);
+    const [isSecure, setIsSecure] = useState(true);
 
     const recorderRef = useRef(null);
 
     useEffect(() => {
         fetchProfile();
+        setIsSecure(window.isSecureContext);
     }, []);
 
     const fetchProfile = async () => {
@@ -129,6 +131,13 @@ function Enroll() {
                         <button onClick={() => setMode('mic')} style={{ flex: 1, border: 'none', background: mode === 'mic' ? '#646cff' : 'transparent', color: 'white', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Microphone</button>
                         <button onClick={() => setMode('upload')} style={{ flex: 1, border: 'none', background: mode === 'upload' ? '#646cff' : 'transparent', color: 'white', padding: '8px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>File Upload</button>
                     </div>
+
+                    {!isSecure && mode === 'mic' && (
+                        <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid #ef4444', color: '#ef4444', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '0.85rem', textAlign: 'left' }}>
+                            <AlertCircle size={16} style={{ verticalAlign: 'middle', marginRight: '5px' }} />
+                            <strong>Non-Secure Connection:</strong> Browsers block microphone access on IP addresses without HTTPS. Please open the link starting with <strong>https://</strong>.
+                        </div>
+                    )}
 
                     {mode === 'mic' ? (
                         <>

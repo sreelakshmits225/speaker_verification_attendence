@@ -6,11 +6,11 @@ import basicSsl from '@vitejs/plugin-basic-ssl'
 export default defineConfig({
   plugins: [
     react(),
-    // basicSsl() // Disable SSL for local testing to avoid mixed content issues
+    basicSsl() // Enable SSL for microphone access on mobile
   ],
   server: {
-    host: '0.0.0.0', // Expose to network
+    host: '0.0.0.0',
     port: 5173,
-    https: false      // Disable HTTPS
+    https: true      // Enable HTTPS for secure context
   }
 })
